@@ -12,11 +12,19 @@ resource "aws_security_group" "web" {
   }
 
   egress {
-    description = "HTTPS only for package repositories, AWS APIs and ECR"
+    description = "HTTPS to interface endpoints inside the VPC"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  egress {
+    description     = "HTTPS to Amazon S3 through the gateway endpoint"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [var.s3_prefix_list_id]
   }
 
   lifecycle {
@@ -97,15 +105,13 @@ resource "aws_instance" "this" {
   root_block_device {
     encrypted   = true
     volume_type = "gp3"
-    volume_size = 8
+    volume_size = 30
   }
 
   user_data = <<-EOT
     #!/bin/bash
     set -euxo pipefail
 
-    dnf update -y
-    dnf install -y docker
     systemctl enable --now docker
 
     REGISTRY="$(echo '${var.container_image}' | cut -d/ -f1)"
