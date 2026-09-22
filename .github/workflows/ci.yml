@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    name: Container validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t aws-devops-infrastructure:ci .
+
+      - name: Run container
+        run: docker run -d --name devops-app -p 8080:8080 aws-devops-infrastructure:ci
+
+      - name: Smoke test
+        run: |
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8080/health | grep -q "ok"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs devops-app
+          exit 1
+
+      - name: Scan container image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: aws-devops-infrastructure:ci
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: true
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f devops-app || true
+
+  terraform:
+    name: Terraform validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform
+
+      - name: Validate bootstrap
+        working-directory: terraform/bootstrap
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate dev environment
+        working-directory: terraform/environments/dev
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Scan Terraform configuration
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
